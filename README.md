@@ -19,7 +19,7 @@ Krino skips all of that. Your "filesystem" is just S3 keys arranged to look like
 ## Install
 
 ```bash
-npm install krino
+bun add krino
 ```
 
 Single runtime dependency: `@aws-sdk/client-s3`.
@@ -235,13 +235,13 @@ The repo includes an eval framework that tests agents against a seeded codebase:
 
 ```bash
 # Run evals against in-memory store (no infra needed)
-ANTHROPIC_API_KEY=... npm run eval
+ANTHROPIC_API_KEY=... bun run eval
 
 # Run a single eval task
-ANTHROPIC_API_KEY=... npm run eval create-component
+ANTHROPIC_API_KEY=... bun run eval create-component
 
 # Run integration tests against real R2
-R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=... npm run test:r2
+R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=... bun run test:r2
 ```
 
 5 eval tasks — explore project, create component, edit page, create page + update nav, multi-file refactor. All pass with Claude Sonnet.
@@ -249,9 +249,9 @@ R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=... np
 ## Tests
 
 ```bash
-npm test           # 432 tests
-npm run typecheck  # zero errors
-npm run build      # ESM + CJS + declarations
+bun test           # 432 tests
+bun run typecheck  # zero errors
+bun run build      # ESM + CJS + declarations
 ```
 
 ## License

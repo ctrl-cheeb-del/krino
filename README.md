@@ -1,4 +1,6 @@
-# s3fs-agent
+# krino
+
+*κρίνω (Greek) — to judge, to distinguish, to discern*
 
 > This entire project — every line of code, every test, every eval — was written by Claude. A human had the idea and guided the direction. Claude did the rest.
 
@@ -10,14 +12,14 @@ Your agent thinks it's in a normal development environment. It runs `ls`, `cat`,
 
 Every current approach to giving an AI agent filesystem access requires spinning up a VM or container (E2B, Daytona, etc). You pay for compute while the agent is waiting for an LLM response — which is ~90% of the time.
 
-s3fs-agent skips all of that. Your "filesystem" is just S3 keys arranged to look like paths, and a thin translation layer that converts filesystem operations into S3 API calls. Cost: fractions of a penny per 1,000 file operations. No startup latency. No fleet management. No idle compute.
+Krino skips all of that. Your "filesystem" is just S3 keys arranged to look like paths, and a thin translation layer that converts filesystem operations into S3 API calls. Cost: fractions of a penny per 1,000 file operations. No startup latency. No fleet management. No idle compute.
 
 **The tradeoff:** agents can read and write files, but can't execute code (`npm install`, `node`, `python` return "command not found"). If your agent needs to run programs, you still need a real sandbox. If it just needs to navigate, read, edit, and create files — this is all you need.
 
 ## Install
 
 ```bash
-npm install s3fs-agent
+npm install krino
 ```
 
 Single runtime dependency: `@aws-sdk/client-s3`.
@@ -25,7 +27,7 @@ Single runtime dependency: `@aws-sdk/client-s3`.
 ## Quick Start
 
 ```typescript
-import { Filesystem, getTools, getShellTool } from "s3fs-agent";
+import { Filesystem, getTools, getShellTool } from "krino";
 
 const fs = new Filesystem({
   bucket: "my-agent-data",
@@ -107,7 +109,7 @@ The `run_command` tool supports everything a model would try in a locked-down co
 
 ```typescript
 import Anthropic from "@anthropic-ai/sdk";
-import { Filesystem, getTools, getShellTool } from "s3fs-agent";
+import { Filesystem, getTools, getShellTool } from "krino";
 
 const anthropic = new Anthropic();
 const fs = new Filesystem({ bucket: "my-bucket", prefix: "agent/session-1" });
@@ -139,7 +141,7 @@ for (const block of response.content) {
 ```typescript
 import { generateText, tool } from "ai";
 import { z } from "zod";
-import { Filesystem, getTools } from "s3fs-agent";
+import { Filesystem, getTools } from "krino";
 
 const fs = new Filesystem({ bucket: "my-bucket" });
 const fsTools = getTools(fs);
@@ -216,20 +218,20 @@ No DynamoDB lock table. No Redis. Just S3 conditional writes.
 - **Credential isolation** — The agent receives tool functions (closures), never the `Filesystem` instance, `S3Client`, or credentials.
 - **Error sanitization** — AWS SDK errors are caught and replaced with generic messages. No bucket names, S3 keys, endpoints, or request IDs leak to the model.
 - **Sentinel hiding** — `.keep` directory markers are filtered from listings and blocked from direct reads.
-- **No S3 concepts in tool definitions** — Tool names, descriptions, parameter names, and return values contain zero references to S3, R2, ETags, buckets, or object storage. The model thinks it's in a sandbox.
+- **No S3 concepts in tool definitions** — Tool names, descriptions, parameter names, and return values contain zero references to S3, R2, ETags, buckets, or object storage.
 
 ## How It Works
 
-- S3 keys **are** the filesystem paths. `/agents/bob/notes.txt` → S3 key `agents/bob/notes.txt`.
-- Directories use `.keep` sentinel objects (same convention as AWS Console).
-- No persistent state between tool calls. The S3 bucket is the only infrastructure.
-- The `Filesystem` class handles path resolution, ETag normalization, error mapping.
-- `getTools()` wraps it in a model-safe layer — plain strings in, plain strings out.
-- `getShellTool()` adds a bash command parser on top — `ls`, `cat`, `grep`, pipes, heredocs all route through the same `Filesystem`.
+- S3 keys **are** the filesystem paths. `/agents/bob/notes.txt` → S3 key `agents/bob/notes.txt`
+- Directories use `.keep` sentinel objects (same convention as AWS Console)
+- No persistent state between tool calls — the S3 bucket is the only infrastructure
+- `Filesystem` class handles path resolution, ETag normalization, error mapping
+- `getTools()` wraps it in a model-safe layer — plain strings in, plain strings out
+- `getShellTool()` adds a bash parser on top — `ls`, `cat`, `grep`, pipes, heredocs all route through the same `Filesystem`
 
 ## Eval Suite
 
-The repo includes an eval framework that tests agents against a seeded project:
+The repo includes an eval framework that tests agents against a seeded codebase:
 
 ```bash
 # Run evals against in-memory store (no infra needed)
@@ -238,7 +240,7 @@ ANTHROPIC_API_KEY=... npm run eval
 # Run a single eval task
 ANTHROPIC_API_KEY=... npm run eval create-component
 
-# Run against real R2
+# Run integration tests against real R2
 R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=... npm run test:r2
 ```
 

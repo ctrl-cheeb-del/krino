@@ -1,7 +1,7 @@
 {
-  "name": "s3fs-agent",
+  "name": "krino",
   "version": "0.1.0",
-  "description": "Filesystem-like interface over S3/R2 for AI agents. No VMs, no daemons — just S3.",
+  "description": "Virtual filesystem for AI agents, backed by S3/R2. No VMs, no sandboxes — the agent thinks it's in a real environment.",
   "type": "module",
   "exports": {
     ".": {
@@ -36,6 +36,7 @@
     "vitest": "^3.1.0"
   },
   "keywords": [
+    "krino",
     "s3",
     "r2",
     "filesystem",
@@ -43,7 +44,8 @@
     "agent",
     "cloudflare",
     "tools",
-    "llm"
+    "llm",
+    "sandbox"
   ],
   "license": "MIT",
   "engines": {

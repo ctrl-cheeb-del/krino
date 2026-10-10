@@ -1,12 +1,13 @@
-import type {
-  BufferEncoding,
-  CpOptions,
-  CreateExclusiveOptions,
-  FileContent,
-  FsStat,
-  IFileSystem,
-  MkdirOptions,
-  RmOptions,
+import {
+  DefenseInDepthBox,
+  type BufferEncoding,
+  type CpOptions,
+  type CreateExclusiveOptions,
+  type FileContent,
+  type FsStat,
+  type IFileSystem,
+  type MkdirOptions,
+  type RmOptions,
 } from "just-bash";
 import { encodingOf, fromBytes, toBytes } from "./encoding.js";
 import { basename, dirname, isWithin, join, normalize, resolve } from "./paths.js";
@@ -131,7 +132,7 @@ export class KrinoFs implements IFileSystem {
     this.assertWritableFile(p, "open");
     const body = toBytes(content);
     try {
-      const info = await this.store.put(this.key(p), body, { ifMatch: version });
+      const info = await trusted(() => this.store.put(this.key(p), body, { ifMatch: version }));
       this.addFile(p, info, FILE_MODE);
       this.remember(p, info.etag, body);
     } catch (err) {
@@ -232,7 +233,9 @@ export class KrinoFs implements IFileSystem {
     this.assertWritableFile(p, "open");
     let info: ObjectInfo;
     try {
-      info = await this.store.put(this.key(p), new Uint8Array(), { ifNoneMatch: "*" });
+      info = await trusted(() =>
+        this.store.put(this.key(p), new Uint8Array(), { ifNoneMatch: "*" }),
+      );
     } catch (err) {
       if (err instanceof PreconditionFailedError) throw fsError("EEXIST", "open", path);
       throw fsError("EIO", "open", path);
@@ -375,7 +378,7 @@ export class KrinoFs implements IFileSystem {
   /** Storage errors never reach the agent: no bucket names, keys or endpoints. */
   private async io<T>(syscall: string, path: string, fn: () => Promise<T>): Promise<T> {
     try {
-      return await fn();
+      return await trusted(fn);
     } catch {
       throw fsError("EIO", syscall, path);
     }
@@ -526,6 +529,14 @@ export class KrinoFs implements IFileSystem {
     this.cache.delete(path);
     this.cacheSize -= hit.body.byteLength;
   }
+}
+
+/**
+ * Storage clients use timers and their own promises, which just-bash's
+ * sandbox blocks while a command runs. krino is host code, so it opts out.
+ */
+function trusted<T>(fn: () => Promise<T>): Promise<T> {
+  return DefenseInDepthBox.runTrustedAsync(fn);
 }
 
 async function pool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {

@@ -98,6 +98,25 @@ describe("shell over object storage", () => {
     expect(store.objects.size).toBe(0);
   });
 
+  it("works when storage calls actually wait (timers inside just-bash's sandbox)", async () => {
+    const base = memoryStore();
+    const wait = () => new Promise((r) => setTimeout(r, 2));
+    const slow: ObjectStore = {
+      async *list(p) {
+        await wait();
+        yield* base.list(p);
+      },
+      get: async (k) => (await wait(), base.get(k)),
+      put: async (k, b, o) => (await wait(), base.put(k, b, o)),
+      delete: async (k) => (await wait(), base.delete(k)),
+    };
+    for (const f of ["a", "b"]) await base.put(`p/src/${f}.ts`, new TextEncoder().encode("import x\n"));
+    const { bash } = await createBash({ store: slow, prefix: "p" });
+    const r = await bash.exec("sed -i 's/import/IMPORT/' src/*.ts && cat src/*.ts && grep -rc IMPORT src");
+    expect(r.stderr).toBe("");
+    expect(r.stdout).toContain("IMPORT x\nIMPORT x\n");
+  });
+
   it("gives the agent shell errors, never storage details", async () => {
     const failing: ObjectStore = {
       ...memoryStore(),

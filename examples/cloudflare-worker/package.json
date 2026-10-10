@@ -1,0 +1,16 @@
+{
+  "name": "krino-worker-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "just-bash": "^3.6.0",
+    "krino": "file:../.."
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

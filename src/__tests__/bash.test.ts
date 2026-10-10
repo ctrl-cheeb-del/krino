@@ -11,12 +11,12 @@ async function setup(seed: Record<string, string> = {}, prefix = "s/1") {
   for (const [path, body] of Object.entries(seed)) {
     await store.put(`${prefix}/${path}`, new TextEncoder().encode(body));
   }
-  const { bash, fs } = await createBash({ store, prefix });
+  const session = await createBash({ store, prefix });
   const run = async (cmd: string) => {
-    const r = await bash.exec(cmd);
+    const r = await session.exec(cmd);
     return { ...r, out: r.stdout.trimEnd() };
   };
-  return { store, bash, fs, run };
+  return { store, session, fs: session.fs, run };
 }
 
 describe("shell over object storage", () => {
@@ -71,23 +71,23 @@ describe("shell over object storage", () => {
   it("keeps empty folders across sessions without showing the marker", async () => {
     const store = memoryStore();
     const first = await createBash({ store, prefix: "p" });
-    await first.bash.exec("mkdir -p empty/inside && echo x > f/../keep.txt");
-    await first.bash.exec("mkdir tmpdir && touch tmpdir/x && rm tmpdir/x");
+    await first.exec("mkdir -p empty/inside && echo x > f/../keep.txt");
+    await first.exec("mkdir tmpdir && touch tmpdir/x && rm tmpdir/x");
 
     const second = await createBash({ store, prefix: "p" });
-    const ls = await second.bash.exec("ls -a empty tmpdir; find . | sort");
+    const ls = await second.exec("ls -a empty tmpdir; find . | sort");
     expect(ls.stdout).toContain("inside");
     expect(ls.stdout).not.toContain(".krino-dir");
-    expect((await second.bash.exec("test -d tmpdir && echo yes")).stdout).toBe("yes\n");
+    expect((await second.exec("test -d tmpdir && echo yes")).stdout).toBe("yes\n");
   });
 
   it("isolates prefixes and clamps traversal at the mount", async () => {
     const store = memoryStore();
     await store.put("other/secret.txt", new TextEncoder().encode("nope"));
-    const { bash } = await createBash({ store, prefix: "mine" });
-    const r = await bash.exec("cat ../other/secret.txt; cat ../../other/secret.txt; ls /");
+    const { exec } = await createBash({ store, prefix: "mine" });
+    const r = await exec("cat ../other/secret.txt; cat ../../other/secret.txt; ls /");
     expect(r.stdout).not.toContain("nope");
-    await bash.exec("echo hi > ../../escape.txt");
+    await exec("echo hi > ../../escape.txt");
     expect(store.objects.has("escape.txt")).toBe(false);
   });
 
@@ -111,8 +111,8 @@ describe("shell over object storage", () => {
       delete: async (k) => (await wait(), base.delete(k)),
     };
     for (const f of ["a", "b"]) await base.put(`p/src/${f}.ts`, new TextEncoder().encode("import x\n"));
-    const { bash } = await createBash({ store: slow, prefix: "p" });
-    const r = await bash.exec("sed -i 's/import/IMPORT/' src/*.ts && cat src/*.ts && grep -rc IMPORT src");
+    const { exec } = await createBash({ store: slow, prefix: "p" });
+    const r = await exec("sed -i 's/import/IMPORT/' src/*.ts && cat src/*.ts && grep -rc IMPORT src");
     expect(r.stderr).toBe("");
     expect(r.stdout).toContain("IMPORT x\nIMPORT x\n");
   });
@@ -125,8 +125,8 @@ describe("shell over object storage", () => {
       },
     };
     await failing.put("s/1/x.txt", new Uint8Array([104]));
-    const { bash } = await createBash({ store: failing, prefix: "s/1" });
-    const r = await bash.exec("cat x.txt; cat missing.txt");
+    const { exec } = await createBash({ store: failing, prefix: "s/1" });
+    const r = await exec("cat x.txt; cat missing.txt");
     expect(r.stderr).not.toMatch(/S3|bucket|prod-agents|AccessDenied/);
     expect(r.stderr).toContain("missing.txt");
   });
@@ -242,12 +242,106 @@ describe("KrinoFs", () => {
 });
 
 describe("bashTool", () => {
+  it("keeps the start and the end of long output", async () => {
+    const { session } = await setup();
+    const out = await session.tool({ maxOutput: 200 }).execute({ command: "seq 1 1000" });
+    expect(out.startsWith("1\n2\n")).toBe(true);
+    expect(out).toContain("characters omitted");
+    expect(out.trimEnd().endsWith("1000")).toBe(true);
+  });
+
   it("returns terminal-style output with exit codes", async () => {
-    const { bash } = await setup({ "a.txt": "hi\n" });
-    const tool = bashTool(bash);
+    const { session } = await setup({ "a.txt": "hi\n" });
+    const tool = session.tool();
     expect(await tool.execute({ command: "cat a.txt" })).toBe("hi\n");
     const fail = await tool.execute({ command: "cat nope.txt" });
     expect(fail).toMatch(/nope\.txt/);
     expect(fail).toMatch(/\[exit code 1\]$/);
+  });
+});
+
+describe("session", () => {
+  it("keeps cd and exported variables between commands, like a terminal", async () => {
+    const { run } = await setup({ "src/app.ts": "x\n" });
+    await run("cd src && export MODE=dev && LOCAL=1");
+    expect((await run("pwd; echo $MODE; ls")).out).toBe("/workspace/src\ndev\napp.ts");
+    await run("cd /tmp");
+    expect((await run("pwd")).out).toBe("/tmp");
+  });
+
+  it("falls back to /workspace when the current folder is deleted", async () => {
+    const { run } = await setup({ "a/x": "1" });
+    await run("cd a");
+    await run("rm -rf /workspace/a");
+    expect((await run("pwd")).out).toBe("/workspace");
+  });
+
+  it("saves each file once per command, in parallel", async () => {
+    const store = memoryStore();
+    let puts = 0;
+    const session = await createBash({
+      store: { ...store, put: (k, b, o) => (puts++, store.put(k, b, o)) },
+    });
+    await session.exec("echo a > f.txt && echo b >> f.txt && echo c > f.txt");
+    expect(puts).toBe(1);
+    expect(text(store, "f.txt")).toBe("c\n");
+  });
+
+  it("reports failed saves as a shell error and retries them on the next command", async () => {
+    const store = memoryStore();
+    let broken = true;
+    const session = await createBash({
+      store: {
+        ...store,
+        put: (k, b, o) => (broken ? Promise.reject(new Error("R2 503 bucket=x")) : store.put(k, b, o)),
+      },
+    });
+    const first = await session.exec("echo hi > a.txt");
+    expect(first.exitCode).toBe(1);
+    expect(first.stderr).toMatch(/Input\/output error/);
+    expect(first.stderr).not.toMatch(/R2|bucket/);
+    expect((await session.exec("cat a.txt")).stdout).toBe("hi\n");
+    broken = false;
+    await session.exec("true");
+    expect(text(store, "a.txt")).toBe("hi\n");
+  });
+
+  it("never deletes a moved file's source when its copy failed", async () => {
+    const store = memoryStore();
+    await store.put("keep/a.txt", new TextEncoder().encode("precious"));
+    let broken = true;
+    const session = await createBash({
+      store: {
+        ...store,
+        copy: (from, to) => (broken ? Promise.reject(new Error("boom")) : store.copy!(from, to)),
+      },
+    });
+    const r = await session.exec("mv keep moved");
+    expect(r.exitCode).toBe(1);
+    expect(text(store, "keep/a.txt")).toBe("precious");
+    broken = false;
+    await session.exec("true");
+    expect(text(store, "moved/a.txt")).toBe("precious");
+    expect(text(store, "keep/a.txt")).toBeUndefined();
+  });
+
+  it("reads a file copied in the same command before it is saved", async () => {
+    const { run, store } = await setup({ "a.txt": "one\n" });
+    expect((await run("cp a.txt b.txt && echo two > a.txt && cat b.txt a.txt")).out).toBe("one\ntwo");
+    expect(text(store, "s/1/b.txt")).toBe("one\n");
+    expect(text(store, "s/1/a.txt")).toBe("two\n");
+  });
+
+  it("does not delete files recreated after rm -rf in the same command", async () => {
+    const { run, store } = await setup({ "d/old.txt": "old" });
+    await run("rm -rf d && mkdir d && echo new > d/new.txt");
+    expect(text(store, "s/1/d/old.txt")).toBeUndefined();
+    expect(text(store, "s/1/d/new.txt")).toBe("new\n");
+  });
+
+  it("runs overlapping exec calls one at a time", async () => {
+    const { session } = await setup();
+    await Promise.all([session.exec("cd /tmp"), session.exec("echo x > f.txt")]);
+    expect((await session.exec("cat f.txt")).stdout).toBe("x\n");
   });
 });

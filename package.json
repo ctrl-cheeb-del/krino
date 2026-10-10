@@ -1,54 +1,41 @@
 {
   "name": "krino",
-  "version": "0.1.0",
-  "description": "Virtual filesystem for AI agents, backed by S3/R2. No VMs, no sandboxes — the agent thinks it's in a real environment.",
+  "version": "0.2.0",
+  "description": "R2/S3-backed filesystem for just-bash. Agents get a real-feeling bash; files live in object storage; nothing runs between commands.",
   "type": "module",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": "./dist/index.js"
+    },
+    "./s3": {
+      "types": "./dist/s3.d.ts",
+      "import": "./dist/s3.js"
     }
   },
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": [
-    "dist"
-  ],
+  "files": ["dist"],
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
-    "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "eval": "tsx eval/run.ts",
-    "test:r2": "tsx eval/r2-test.ts",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "bun run build"
   },
-  "dependencies": {
-    "@aws-sdk/client-s3": "^3.750.0"
+  "peerDependencies": {
+    "@aws-sdk/client-s3": "^3.750.0",
+    "just-bash": "^3.6.0"
+  },
+  "peerDependenciesMeta": {
+    "@aws-sdk/client-s3": { "optional": true }
   },
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.86.0",
+    "@aws-sdk/client-s3": "^3.750.0",
+    "just-bash": "^3.6.0",
     "tsup": "^8.4.0",
-    "tsx": "^4.21.0",
     "typescript": "^5.8.0",
     "vitest": "^3.1.0"
   },
-  "keywords": [
-    "krino",
-    "s3",
-    "r2",
-    "filesystem",
-    "ai",
-    "agent",
-    "cloudflare",
-    "tools",
-    "llm",
-    "sandbox"
-  ],
+  "keywords": ["just-bash", "bash", "agent", "ai", "filesystem", "r2", "s3", "cloudflare", "workers", "llm", "sandbox"],
   "license": "MIT",
-  "engines": {
-    "node": ">=18"
-  }
+  "engines": { "node": ">=20.19" }
 }

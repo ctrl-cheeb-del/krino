@@ -1,46 +1,32 @@
-/**
- * Resolve a user-facing path to an S3 key.
- *
- * - Absolute paths (starting with `/`) ignore cwd.
- * - Relative paths are joined with cwd.
- * - `.` and `..` segments are normalized; `..` clamps at root.
- * - The prefix is prepended. The result never starts with `/`.
- */
-export function resolvePath(
-  cwd: string,
-  inputPath: string,
-  prefix: string,
-): string {
-  const absolute = inputPath.startsWith("/") ? inputPath : cwd + "/" + inputPath;
-  const parts = absolute.split("/").filter(Boolean);
-
-  const resolved: string[] = [];
-  for (const part of parts) {
-    if (part === ".") continue;
-    if (part === "..") {
-      resolved.pop();
-    } else {
-      resolved.push(part);
-    }
+/** Absolute POSIX path with `.`/`..` collapsed; `..` past root stays at root. */
+export function normalize(path: string): string {
+  const out: string[] = [];
+  for (const part of path.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") out.pop();
+    else out.push(part);
   }
-
-  const normalizedPrefix = prefix ? prefix.replace(/\/+$/, "") + "/" : "";
-  const tail = resolved.join("/");
-  return tail ? normalizedPrefix + tail : normalizedPrefix.replace(/\/$/, "");
+  return `/${out.join("/")}`;
 }
 
-/**
- * Convert an S3 key back to a user-facing display path (for error messages).
- */
-export function toDisplayPath(s3Key: string, prefix: string): string {
-  const normalizedPrefix = prefix ? prefix.replace(/\/+$/, "") + "/" : "";
-  let stripped: string;
-  if (normalizedPrefix && s3Key === normalizedPrefix.replace(/\/$/, "")) {
-    stripped = "";
-  } else if (s3Key.startsWith(normalizedPrefix)) {
-    stripped = s3Key.slice(normalizedPrefix.length);
-  } else {
-    stripped = s3Key;
-  }
-  return "/" + stripped;
+export function resolve(base: string, path: string): string {
+  return normalize(path.startsWith("/") ? path : `${base}/${path}`);
+}
+
+export function dirname(path: string): string {
+  const i = path.lastIndexOf("/");
+  return i <= 0 ? "/" : path.slice(0, i);
+}
+
+export function basename(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
+}
+
+export function join(dir: string, name: string): string {
+  return dir === "/" ? `/${name}` : `${dir}/${name}`;
+}
+
+/** True when `path` is `dir` itself or anywhere beneath it. */
+export function isWithin(path: string, dir: string): boolean {
+  return dir === "/" || path === dir || path.startsWith(`${dir}/`);
 }

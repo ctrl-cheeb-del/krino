@@ -78,5 +78,12 @@ export function memoryStore(): ObjectStore & { objects: Map<string, StoredObject
     async delete(keys) {
       for (const key of keys) objects.delete(key);
     },
+    async copy(from, to) {
+      const src = objects.get(from);
+      if (!src) throw new Error(`no such key: ${from}`);
+      const obj = { ...src, key: to, etag: `v${++version}`, mtime: new Date() };
+      objects.set(to, obj);
+      return info(obj);
+    },
   };
 }

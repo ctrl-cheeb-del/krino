@@ -1,12 +1,27 @@
 import { Bash, InMemoryFs, MountableFs, type BashOptions } from "just-bash";
+import { rangeCommands } from "./commands.js";
 import { KrinoFs, type KrinoFsOptions } from "./fs.js";
+import { readOnly } from "./readonly.js";
 
-export interface CreateBashOptions extends Omit<KrinoFsOptions, "writeBehind"> {
+export interface SessionOptions {
   /** Where the stored files appear in the shell. Default `/workspace`. */
   mountPoint?: string;
+  /** Every write fails with "read-only file system". Default false. */
+  readOnly?: boolean;
+  /**
+   * Files at least this big are read in pieces by `head -n` and `tail -n`
+   * instead of downloaded whole. Default 1 MB.
+   */
+  bigFileBytes?: number;
   /** Passed through to just-bash (commands, env, limits, network...). */
   bash?: Omit<BashOptions, "fs" | "cwd" | "files">;
 }
+
+/**
+ * Either open a new filesystem (`store` + `prefix`), or pass an open one as
+ * `fs` so several sessions share one folder, each with its own `cd` and `export`.
+ */
+export type CreateBashOptions = SessionOptions & ({ fs: KrinoFs } | Omit<KrinoFsOptions, "writeBehind">);
 
 export interface ExecResult {
   stdout: string;
@@ -34,14 +49,16 @@ export interface Session {
  * `/tmp`, `/dev` and `/proc` live in memory for the session's lifetime.
  */
 export async function createBash(options: CreateBashOptions): Promise<Session> {
-  const { mountPoint = "/workspace", bash: bashOptions, ...fsOptions } = options;
-  const fs = await KrinoFs.open({ ...fsOptions, writeBehind: true });
+  const { mountPoint = "/workspace", bash: bashOptions, bigFileBytes = 1024 * 1024 } = options;
+  const fs = "fs" in options ? options.fs : await KrinoFs.open({ ...options, writeBehind: true });
   const base = new InMemoryFs();
   base.mkdirSync("/tmp", { recursive: true });
+  const mounted = options.readOnly ? readOnly(fs, mountPoint) : fs;
   const bash = new Bash({
     ...bashOptions,
-    fs: new MountableFs({ base, mounts: [{ mountPoint, filesystem: fs }] }),
+    fs: new MountableFs({ base, mounts: [{ mountPoint, filesystem: mounted }] }),
     cwd: mountPoint,
+    customCommands: [...rangeCommands(fs, mountPoint, bigFileBytes), ...(bashOptions?.customCommands ?? [])],
   });
 
   let cwd = mountPoint;
@@ -49,7 +66,16 @@ export async function createBash(options: CreateBashOptions): Promise<Session> {
   let queue = Promise.resolve();
 
   const run = async (command: string): Promise<ExecResult> => {
-    const result = await bash.exec(command, { cwd, env: env && { ...env, PWD: cwd } });
+    let result;
+    try {
+      result = await bash.exec(command, { cwd, env: env && { ...env, PWD: cwd } });
+    } catch (err) {
+      // just-bash lets some write errors (e.g. a `>` redirect) escape exec.
+      const shown = shellError(err);
+      if (!shown) throw err;
+      await fs.flush().catch(() => {});
+      return { stdout: "", stderr: shown, exitCode: 1 };
+    }
     let { stdout, stderr, exitCode } = result;
     try {
       await fs.flush();
@@ -81,6 +107,22 @@ export async function createBash(options: CreateBashOptions): Promise<Session> {
     fs,
   };
   return session;
+}
+
+const SHELL_MESSAGES: Record<string, string> = {
+  EROFS: "Read-only file system",
+  EIO: "Input/output error",
+  ENOENT: "No such file or directory",
+  ENOTDIR: "Not a directory",
+  EISDIR: "Is a directory",
+  EACCES: "Permission denied",
+  EPERM: "Operation not permitted",
+};
+
+function shellError(err: unknown): string | null {
+  const match = /^(E[A-Z]+): .*?'([^']*)'/.exec(err instanceof Error ? err.message : "");
+  const text = match && SHELL_MESSAGES[match[1]!];
+  return text ? `bash: ${match![2]}: ${text}\n` : null;
 }
 
 export interface ToolOptions {

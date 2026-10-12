@@ -11,7 +11,13 @@ import type {
 } from "just-bash";
 import { encodingOf, fromBytes, toBytes } from "./encoding.js";
 import { basename, dirname, isWithin, join, normalize, resolve } from "./paths.js";
-import { PreconditionFailedError, type ObjectInfo, type ObjectStore } from "./store.js";
+import {
+  PreconditionFailedError,
+  sliceRange,
+  type ByteRange,
+  type ObjectInfo,
+  type ObjectStore,
+} from "./store.js";
 
 /** Marks a directory that has no files in it; never shown to the agent. */
 export const DIR_MARKER = ".krino-dir";
@@ -75,9 +81,10 @@ const MESSAGES: Record<string, string> = {
   EINVAL: "invalid argument",
   EACCES: "permission denied",
   EIO: "input/output error",
+  EROFS: "read-only file system",
 };
 
-function fsError(code: string, syscall: string, path: string): Error {
+export function fsError(code: string, syscall: string, path: string): Error {
   return Object.assign(new Error(`${code}: ${MESSAGES[code]}, ${syscall} '${path}'`), { code });
 }
 
@@ -176,6 +183,32 @@ export class KrinoFs implements IFileSystem {
       .filter(([p, n]) => n.type === "file" && n.size > 0 && isWithin(p, root) && !this.cached(p))
       .map(([p]) => p);
     await pool(paths, this.concurrency, (p) => this.readFileBuffer(p).then(() => {}));
+  }
+
+  /**
+   * Read part of a file without downloading the rest, when the store supports
+   * it. Used by `head` and `tail` on big files.
+   */
+  async readRange(path: string, range: ByteRange): Promise<Uint8Array> {
+    const p = normalize(path);
+    const node = this.nodes.get(p);
+    if (!node) throw fsError("ENOENT", "open", path);
+    if (node.type === "dir") throw fsError("EISDIR", "read", path);
+    if (node.size === 0) return new Uint8Array();
+
+    const key = this.key(p);
+    const queued = this.pending.get(key) ?? this.inflight.get(key);
+    const hit = this.cached(p);
+    if ((hit && hit.etag === node.etag) || queued?.op === "put" || !this.store.getRange) {
+      return sliceRange(await this.readFileBuffer(p), range);
+    }
+    const from = queued?.op === "copy" ? queued.from : key;
+    const part = await this.io("open", path, () => this.store.getRange!(from, range));
+    if (!part) {
+      this.removeTree(p);
+      throw fsError("ENOENT", "open", path);
+    }
+    return part.body;
   }
 
   /** Read with a version token for `writeIfUnchanged`. Not exposed to the agent. */

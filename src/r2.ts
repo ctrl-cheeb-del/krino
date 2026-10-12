@@ -1,5 +1,6 @@
 import {
   normalizeEtag,
+  sliceRange,
   PreconditionFailedError,
   type ObjectInfo,
   type ObjectStore,
@@ -10,7 +11,10 @@ import {
  * so the package doesn't depend on @cloudflare/workers-types.
  */
 export interface R2BucketLike {
-  get(key: string): Promise<R2ObjectBodyLike | null>;
+  get(
+    key: string,
+    options?: { range?: { offset: number; length: number } | { suffix: number } },
+  ): Promise<R2ObjectBodyLike | null>;
   put(
     key: string,
     value: Uint8Array,
@@ -78,6 +82,14 @@ export function r2Store(bucket: R2BucketLike): ObjectStore {
       for (let i = 0; i < keys.length; i += 1000) {
         await bucket.delete(keys.slice(i, i + 1000));
       }
+    },
+    async getRange(key, range) {
+      const o = await bucket.get(key, { range });
+      if (!o) return null;
+      const body = new Uint8Array(await o.arrayBuffer());
+      // Some runtimes ignore the range; trim so callers always get what they asked for.
+      const trimmed = body.length === o.size && o.size > 0 ? sliceRange(body, range) : body;
+      return { body: trimmed, size: o.size, etag: normalizeEtag(o.etag) };
     },
   };
 }

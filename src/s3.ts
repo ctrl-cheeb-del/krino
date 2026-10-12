@@ -10,6 +10,9 @@ import {
 } from "@aws-sdk/client-s3";
 import { normalizeEtag, PreconditionFailedError, type ObjectStore } from "./store.js";
 
+const rangeHeader = (r: { offset: number; length: number } | { suffix: number }) =>
+  "suffix" in r ? `bytes=-${r.suffix}` : `bytes=${r.offset}-${r.offset + r.length - 1}`;
+
 export interface S3StoreOptions {
   bucket: string;
   /** Pass a client, or config to build one. */
@@ -87,6 +90,22 @@ export function s3Store({ bucket, client, config }: S3StoreOptions): ObjectStore
             Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })), Quiet: true },
           }),
         );
+      }
+    },
+    async getRange(key, range) {
+      if (("suffix" in range ? range.suffix : range.length) <= 0) return null;
+      try {
+        const o = await s3.send(
+          new GetObjectCommand({ Bucket: bucket, Key: key, Range: rangeHeader(range) }),
+        );
+        const body = await o.Body!.transformToByteArray();
+        const total = Number(o.ContentRange?.split("/")[1] ?? body.byteLength);
+        return { body, size: total, etag: normalizeEtag(o.ETag ?? "") };
+      } catch (err) {
+        if (isStatus(err, 404)) return null;
+        // 416: range starts past the end of the object.
+        if (isStatus(err, 416)) return { body: new Uint8Array(), size: 0, etag: "" };
+        throw err;
       }
     },
     async copy(from, to) {

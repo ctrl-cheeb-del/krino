@@ -11,6 +11,23 @@ export interface ObjectStore {
   delete(keys: string[]): Promise<void>;
   /** Server-side copy. Optional; krino falls back to get + put. */
   copy?(from: string, to: string): Promise<ObjectInfo>;
+  /** Read part of an object. Optional; lets `head`/`tail` skip downloading big files. */
+  getRange?(key: string, range: ByteRange): Promise<RangeResult | null>;
+}
+
+/** The first `length` bytes from `offset`, or the last `suffix` bytes. */
+export type ByteRange = { offset: number; length: number } | { suffix: number };
+
+export interface RangeResult {
+  body: Uint8Array;
+  /** Size of the whole object. */
+  size: number;
+  etag: string;
+}
+
+export function sliceRange(body: Uint8Array, range: ByteRange): Uint8Array {
+  if ("suffix" in range) return body.slice(Math.max(0, body.length - range.suffix));
+  return body.slice(range.offset, range.offset + range.length);
 }
 
 export interface ObjectInfo {
@@ -77,6 +94,10 @@ export function memoryStore(): ObjectStore & { objects: Map<string, StoredObject
     },
     async delete(keys) {
       for (const key of keys) objects.delete(key);
+    },
+    async getRange(key, range) {
+      const obj = objects.get(key);
+      return obj ? { body: sliceRange(obj.body, range), size: obj.size, etag: obj.etag } : null;
     },
     async copy(from, to) {
       const src = objects.get(from);

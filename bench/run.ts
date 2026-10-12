@@ -1,5 +1,9 @@
 // Latency benchmark: every storage call waits LATENCY ms, roughly an R2 round trip.
-import { createBash, memoryStore, type ObjectStore } from "../src/index.ts";
+import { Database } from "bun:sqlite";
+import { createBash, journaled, memoryStore, type ObjectStore } from "../src/index.ts";
+
+// JOURNAL=1 puts a local SQLite journal in front, as a Durable Object would.
+const JOURNAL = process.env.JOURNAL === "1";
 
 const LATENCY = Number(process.env.LATENCY ?? 20);
 const sleep = () => new Promise((r) => setTimeout(r, LATENCY));
@@ -28,7 +32,16 @@ for (let d = 0; d < 10; d++) {
 for (let f = 0; f < 50; f++) await base.put(`p/assets/a${f}.txt`, enc.encode("asset\n"));
 
 const counter = { n: 0 };
-const store = slow(base, counter);
+const remote = slow(base, counter);
+const db = new Database(":memory:");
+const store = JOURNAL
+  ? journaled(remote, {
+      exec(q, ...b) {
+        const rows = db.prepare(q).all(...(b as never[])) as Record<string, unknown>[];
+        return { toArray: () => rows };
+      },
+    })
+  : remote;
 const rows: [string, number, number][] = [];
 async function time(label: string, fn: () => Promise<unknown>) {
   counter.n = 0;
@@ -54,7 +67,7 @@ await time("rm -rf folder (50 files)", () => run("rm -rf static"));
 await time("cat one file x10", () => run("for i in 1 2 3 4 5 6 7 8 9 10; do cat src/mod2/file1.ts > /dev/null; done"));
 
 const total = rows.reduce((s, r) => s + r[1], 0);
-console.log(`latency ${LATENCY} ms per storage call\n`);
+console.log(`latency ${LATENCY} ms per storage call${JOURNAL ? ", journaled" : ""}\n`);
 for (const [label, ms, calls] of rows) {
   console.log(`${label.padEnd(30)} ${ms.toFixed(0).padStart(6)} ms ${String(calls).padStart(5)} calls`);
 }

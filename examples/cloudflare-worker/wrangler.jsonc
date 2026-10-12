@@ -4,6 +4,6 @@
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "r2_buckets": [{ "binding": "FILES", "bucket_name": "krino-files" }],
-  "durable_objects": { "bindings": [{ "name": "SESSIONS", "class_name": "Session" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Session"] }]
+  "durable_objects": { "bindings": [{ "name": "FOLDERS", "class_name": "Folder" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Folder"] }]
 }
